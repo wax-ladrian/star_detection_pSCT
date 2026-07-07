@@ -1,0 +1,5 @@
+name: pSCT
+fov_deg: 8.0
+lat: 31.67472222
+lon: -110.9527778
+elevation: 1268

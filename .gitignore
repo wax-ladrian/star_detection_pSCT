@@ -1,0 +1,8 @@
+*_ignore*
+__pycache__/*
+*.png
+*.jpeg
+*.gif
+*psct_star_visualizer.py
+*star_images.ipynb
+*run*.npy
