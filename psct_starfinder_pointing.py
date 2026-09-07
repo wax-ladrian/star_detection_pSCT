@@ -1271,7 +1271,7 @@ def main():
         ax.set_ylabel('Vertical [mm]')
         ax.set_title(f'Mrk 421 camera path for run {run} with P = {P/1E9}s')
         cbar = fig.colorbar(sc, ax=ax)
-        cbar.set_label(f'Time from {dict_data['time_utc'][0]} [min]')
+        cbar.set_label(f"Time from {dict_data['time_utc'][0]} [min]")
         plt.axis('scaled')
         ax.set_xlim(min((min(dict_data['x_mm']) - 20), -420), max((max(dict_data['x_mm']) + 20), -110))
         ax.set_ylim(min((min(dict_data['y_mm']) - 20), -160), max((max(dict_data['y_mm']) + 20), 160))
