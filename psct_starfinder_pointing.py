@@ -486,7 +486,7 @@ class CameraDisplay: # The class that is the camera display for the pSCT
     # Animation / saving
     # ------------------------------------------------------------------
     def animate(self, values_list, ax=None, interval=200, colorbar=True,
-                cbar_label=None, global_min = None, global_max = None, repeat=True, blit=False, **anim_kwargs):
+                cbar_label=None, global_min = None, global_max = None, repeat=True, blit=False, plot_title = None, **anim_kwargs):
         """
         Build an animation that steps through a list of value-arrays,
         one per frame, calling `set_values` on each frame.
@@ -537,6 +537,7 @@ class CameraDisplay: # The class that is the camera display for the pSCT
             repeat=repeat,
             **anim_kwargs,
         )
+        fig.suptitle(plot_title)
         return self._anim
  
     def save(self, filename, fps=10, dpi=150, writer=None, **kwargs):
@@ -975,7 +976,7 @@ def main():
         #     print("Whaaaa")
         # if args.recollect:
         #     print("WROOOOONG")
-
+        st = tm.time()
         first_collected = False
 
         for sr in sorted([int(get_value_from_filename(fil, '_subrun', '_r1.tio')) for fil in glob.glob(subrun_files.format(run, '*'))]):
@@ -1000,23 +1001,27 @@ def main():
                     np.save(f'{npy_paths}wfs_mean_run{run}_temp.npy', wfs_me)
                     np.save(f'{npy_paths}wfs_mean_sq_run{run}_temp.npy', wfs_sq)
                     np.save(f'{npy_paths}wfs_times_run{run}_temp.npy', times)
-
+        print(f'TIME INFO: Collecting all the data for run {run} took {(tm.time() - st)/60} mins')
+        st = tm.time()
         np.save(f'{npy_paths}wfs_mean_run{run}.npy', wfs_me)
         np.save(f'{npy_paths}wfs_mean_sq_run{run}.npy', wfs_sq)
         np.save(f'{npy_paths}wfs_times_run{run}.npy', times)
         os.system(f'rm {npy_paths}wfs_mean_run{run}_temp.npy')
         os.system(f'rm {npy_paths}wfs_mean_sq_run{run}_temp.npy')
         os.system(f'rm {npy_paths}wfs_times_run{run}_temp.npy')
+        print(f'TIME INFO: Saving all the data for run {run} took {(tm.time() - st)/60} mins')
 
     else:
+        st = tm.time()
         wfs_me = np.load(f'{npy_paths}wfs_mean_run{run}.npy')
         wfs_sq = np.load(f'{npy_paths}wfs_mean_sq_run{run}.npy')
         times = np.load(f'{npy_paths}wfs_times_run{run}.npy')
-
+        print(f'TIME INFO: Loading all the data for run {run} took {(tm.time() - st)/60} mins')
 
     psct_config = load_config(telescope_config) # Gets information about the telescope, like longitude, latitude, elevation, FoV
     catalog = load_hyg_catalog(catalog_path, mag_limit=10, named_only=False) # Loads star catalog
 
+    st = tm.time()
     frames = []
     time_strs = []
     arg = 0
@@ -1068,15 +1073,16 @@ def main():
     if args.save_plots:
         camdisp = CameraDisplay()
 
-        camdisp.animate(list_frames, interval = 200)
+        camdisp.animate(list_frames, interval = 200, plot_title=f'Star Movie for Run {run}\n{convert_to_utc_str(base_timestamp)} UTC')
         camdisp.save(f'{ani_path}run{run}_star-movie.gif')
 
-
-    os.system(f'mkdir -p {point_data_path}run{run}_star_matched')
-    os.system(f'mkdir -p {point_data_path}run{run}_star_matched/full_frame_camera')
+    print(f'TIME INFO: Making all the frames for run {run} took {(tm.time() - st)/60} mins')
     save = args.save_plots
+    os.system(f'mkdir -p {point_data_path}run{run}_star_matched')
+    if save: os.system(f'mkdir -p {point_data_path}run{run}_star_matched/full_frame_camera')
+    # save = args.save_plots
 
-
+    st = tm.time()
     dict_data = {
         'name': [],
         'x': [],
@@ -1244,6 +1250,10 @@ def main():
     np.save(f'{point_data_path}run{run}_star_matched/run{run}_transformation_matrices.npy', np.array(matrices))
     np.save(f'{point_data_path}run{run}_star_matched/run{run}_image_frames.npy', np.array(frames))
 
+    ext_str = 'out'
+    if save: ext_str = ''
+    print(f'TIME INFO: Fitting all the frames for run {run} took {(tm.time() - st)/60} mins with{ext_str} saving plots')
+
     if save:
         fig, ax = plt.subplots()
         # for i in range(-60, a.shape[1]-60, 40):
@@ -1267,8 +1277,8 @@ def main():
                 if not np.isnan(base_frame[k, l]):
                     ax.add_patch(mpatches.Rectangle((pixel_to_length(l-60, float(psct_config['module_width']), float(psct_config['module_pitch']))+space, pixel_to_length(k-60, float(psct_config['module_width']), float(psct_config['module_pitch']))+space), float(psct_config['pixel_size']), float(psct_config['pixel_size']), edgecolor="#41414170", facecolor="#4141412A", alpha = 0.15))
         sc = ax.scatter(dict_data['x_mm'], dict_data['y_mm'], c = (np.array(dict_data['time_abs'])-dict_data['time_abs'][0])/(60), marker = 'o', cmap='viridis')
-        ax.set_xlabel('Horizontal [mm]')
-        ax.set_ylabel('Vertical [mm]')
+        ax.set_xlabel('CORSIKA x-axis [mm]')
+        ax.set_ylabel('CORSIKA y-axis [mm]')
         ax.set_title(f'Mrk 421 camera path for run {run} with P = {P/1E9}s')
         cbar = fig.colorbar(sc, ax=ax)
         cbar.set_label(f"Time from {dict_data['time_utc'][0]} [min]")
