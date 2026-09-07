@@ -1,0 +1,15 @@
+analysis_options:
+  animation_path : '/data/user/oriss/miscelaneous/Mrk421_pointing_information/'
+  npys_path : '/data/user/oriss/data_stars/'
+  point_data_path : '/data/user/oriss/miscelaneous/Mrk421_pointing_information/'
+  P_step : 60
+  dpi_imgs : 800
+  log_files : "/data/wipac/CTA/targetcdata/run{0}_log.log"
+  subrun_files : "/data/wipac/CTA/targetcdata/run{0}_subrun{1}_r1.tio"
+  catalog_path : "/home/oriss/star_detection_pSCT/hyg_v42.csv"
+  telescope_config : "/home/oriss/star_detection_pSCT/psct_config.txt"
+  run_info_path : '/home/oriss/star_detection_pSCT/pSCT_Run_Log-DR8_2026.csv'
+
+bad_srs:
+  400213 : [0]
+  400215 : [52, 54, 55]

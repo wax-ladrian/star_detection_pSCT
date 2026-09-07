@@ -1,5 +1,8 @@
 name: pSCT
 fov_deg: 8.0
+module_pitch: 54.00
+module_width: 52.05
+pixel_size: 6.50625
 lat: 31.67472222
 lon: -110.9527778
 elevation: 1268
