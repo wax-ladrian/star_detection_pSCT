@@ -1292,6 +1292,32 @@ def main():
                 fig.savefig(f"{point_data_path}run{run}_star_matched/run{run}_{time_str.replace(':','-')}_sector7.jpeg")
         # plt.show()
         else:
+            for ind, sourc in enumerate(dst_calc):
+                turp_px = ['NaN', 'NaN']
+                turp_mm = ['NaN', 'NaN']
+                turp_mm_nom = transforming((x_src_predicted[ind], y_src_predicted[ind])) # transforming((pixel_to_length(dst_calc[0]['x']), pixel_to_length(dst_calc[0]['y'])))
+
+                dict_data['name'].append(sourc['name'])
+                dict_data['x'].append(turp_px[0])
+                dict_data['y'].append(turp_px[1])
+                dict_data['x_mm'].append(turp_mm[0])
+                dict_data['y_mm'].append(turp_mm[1])
+                dict_data['x_mm_nominal'].append(turp_mm_nom[0])
+                dict_data['y_mm_nominal'].append(turp_mm_nom[1])
+                dict_data['time_abs'].append(time)
+                dict_data['time_utc'].append(time_str)
+
+            turp_cen_px = ['NaN', 'NaN']
+            turp_cen_mm = ['NaN', 'NaN']
+
+            offset_data['x_c'].append(turp_cen_px[0])
+            offset_data['y_c'].append(turp_cen_px[1])
+            offset_data['x_c_mm'].append(turp_cen_mm[0])
+            offset_data['y_c_mm'].append(turp_cen_mm[1])
+            offset_data['rot_ang'].append('NaN')
+            offset_data['scale_factor'].append('NaN')
+            offset_data['time_abs'].append(time)
+            offset_data['time_utc'].append(time_str)
             if save: fig.savefig(f"{point_data_path}run{run}_star_matched/full_frame_camera/run{run}_failed-frame_{time_str.replace(':','-')}.jpeg")
         plt.close()
 
@@ -1326,15 +1352,17 @@ def main():
             for k in range(base_frame.shape[1]):
                 if not np.isnan(base_frame[k, l]):
                     ax.add_patch(mpatches.Rectangle((pixel_to_length(l-60, float(psct_config['module_width']), float(psct_config['module_pitch']))+space, pixel_to_length(k-60, float(psct_config['module_width']), float(psct_config['module_pitch']))+space), float(psct_config['pixel_size']), float(psct_config['pixel_size']), edgecolor="#41414170", facecolor="#4141412A", alpha = 0.15))
-        sc = ax.scatter(dict_data['x_mm'], dict_data['y_mm'], c = (np.array(dict_data['time_abs'])-dict_data['time_abs'][0])/(60), marker = 'o', cmap='viridis')
+        sc = ax.scatter([x for x in dict_data['x_mm'] if isinstance(x, (float))], [y for y in dict_data['y_mm'] if isinstance(y, (float))], c = (np.array([t for x, t in zip(dict_data['x_mm'], dict_data['time_abs']) if  isinstance(x, (float))])-dict_data['time_abs'][0])/(60), marker = 'o', cmap='viridis', label = 'Estimated path')
+        ax.plot(dict_data['x_mm_nominal'], dict_data['y_mm_nominal'], c='black', label = 'Nominal path', marker='o')
         ax.set_xlabel('CORSIKA x-axis [mm]')
         ax.set_ylabel('CORSIKA y-axis [mm]')
         ax.set_title(f'Mrk 421 camera path for run {run} with P = {P/1E9}s')
         cbar = fig.colorbar(sc, ax=ax)
+        ax.legend()
         cbar.set_label(f"Time from {dict_data['time_utc'][0]} [min]")
         plt.axis('scaled')
-        ax.set_xlim(min((min(dict_data['x_mm']) - 20), -420), max((max(dict_data['x_mm']) + 20), -110))
-        ax.set_ylim(min((min(dict_data['y_mm']) - 20), -160), max((max(dict_data['y_mm']) + 20), 160))
+        ax.set_xlim(min((min([x for x in dict_data['x_mm'] if isinstance(x, (float))]) - 20), -420), max((max([x for x in dict_data['x_mm'] if isinstance(x, (float))]) + 20), -110))
+        ax.set_ylim(min((min([y for y in dict_data['y_mm'] if isinstance(y, (float))]) - 20), -160), max((max([y for y in dict_data['y_mm'] if isinstance(y, (float))]) + 20), 160))
         fig.savefig(f"{point_data_path}run{run}_star_matched/run{run}_targets-trajectory.jpeg")
         print(f'Trajectory plot took {tm.time() - st} seconds')
         plt.close()
