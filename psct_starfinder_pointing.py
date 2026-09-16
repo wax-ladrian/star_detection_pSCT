@@ -1,9 +1,4 @@
-# from __future__ import annotations
-
-# bad_srs = {
-#     400213: [0],
-#     400215: [52, 54, 55]
-# }
+from __future__ import annotations
 
 from pathlib import Path
 import argparse
@@ -50,10 +45,10 @@ make_nans = False
 pxs_p_quad = 16 # Part of the camera geometry builder: pixels per quadrants
 quads_p_module = 4 # Part of the camera geometry builder: quadrants per module
 
-sources_of_interest = [  # List your sources of interest, like Mrk421
-    {'name': 'Mrk421', 'ra': 166.11380833, 'dec': 38.208833, 'mag': 12.9},
-    # {'name': '51 UMa', 'ra': 166.13016, 'dec': 38.241365, 'mag': 6.28},
-    ]
+# sources_of_interest = [  # List your sources of interest, like Mrk421
+#     {'name': 'Mrk421', 'ra': 166.11380833, 'dec': 38.208833, 'mag': 12.9},
+#     # {'name': '51 UMa', 'ra': 166.13016, 'dec': 38.241365, 'mag': 6.28},
+#     ]
 
 others_bounds = [[0, np.exp(4)], [0, np.exp(4)]] # "Others" event box bounds, to select dim events for the star images
 
@@ -104,8 +99,8 @@ def getarrs(wfs_a): # Gives two arrays: one of the value of the mean charge per 
     wfs_sq = [np.zeros((1600), dtype=np.float64) for _ in wfs_a]
     for ev, wf in enumerate(wfs_a):
         for ch in range(wf.shape[0]):
-            wfs_me[ev][ch] = np.mean(wf[ch])
-            wfs_sq[ev][ch] = np.mean(wf[ch]**2)
+            wfs_me[ev][ch] = np.nanmean(wf[ch])
+            wfs_sq[ev][ch] = np.nanmean(wf[ch]**2)
     return wfs_me, wfs_sq
 
 @njit
@@ -115,6 +110,10 @@ def get_gbmean(wfs_m, wfs_sm): # Gets the mean of a matrix of some shape, over t
     for wf in wfs_m:
         gbmean = gbmean + wf
     return gbmean/N
+
+def get_gbmean2(wfs_m, wfs_sm): # Gets the mean of a matrix of some shape, over the first dimension
+    gbmean = np.nanmean(wfs_m, axis = 0)
+    return gbmean
 
 @njit
 def get_int_chargemeanstd_ev(wf, int_win=2): # Gets mean and std charge of all pixels per event
@@ -136,21 +135,25 @@ def get_int_chargemeanstd_ev(wf, int_win=2): # Gets mean and std charge of all p
     mean_c = np.nanmean(int_charge)
     std_c = np.nanstd(int_charge)
     
-    return mean_c, std_c
+    return mean_c, std_c, int_charge
 
-def read_wfs_metrics(calfile, save=False, reader = None, filter = True): # Calculate the waveforms means and mean of the squares, per pixel per event (this filters events with strong charges out)
+
+def read_wfs_metrics(calfile, save=False, reader = None, filter = True, c_lim = 150, evs = None): # Calculate the waveforms means and mean of the squares, per pixel per event (this filters events with strong charges out)
     if reader == None:
         reader = target_io.WaveformArrayReader(calfile, silent=True)
     wfs_me = []
     wfs_sq = []
     times = []
     wfs_all = []
-    for ev in range(reader.fNEvents):
+    if evs == None:
+        evs = list(range(reader.fNEvents))
+    for ev in evs:
         wfs = np.zeros((reader.fNPixels, reader.fNSamples), dtype=np.float32)
 
         reader.GetR1Event(ev, wfs)
+        mean_c, std_c, int_charges = get_int_chargemeanstd_ev(wfs, 4)
+        wfs[int_charges > c_lim, :] = np.nan
         if filter:
-            mean_c, std_c = get_int_chargemeanstd_ev(wfs, 4)
             if mean_c < others_bounds[0][1] and std_c < others_bounds[1][1]:
                 wfs_all.append(wfs)
                 times.append(reader.fTACK_time)
@@ -486,7 +489,7 @@ class CameraDisplay: # The class that is the camera display for the pSCT
     # Animation / saving
     # ------------------------------------------------------------------
     def animate(self, values_list, ax=None, interval=200, colorbar=True,
-                cbar_label=None, global_min = None, global_max = None, repeat=True, blit=False, plot_title = None, **anim_kwargs):
+                cbar_label=None, global_min = None, global_max = None, repeat=True, blit=False, plot_title = None, xlim = [None, None], ylim = [None, None], autoscale_view = False, **anim_kwargs):
         """
         Build an animation that steps through a list of value-arrays,
         one per frame, calling `set_values` on each frame.
@@ -518,11 +521,13 @@ class CameraDisplay: # The class that is the camera display for the pSCT
             global_max = np.nanmax(values_list)
  
         if self._ax is None:
-            self.plot(ax=ax, colorbar=colorbar, cbar_label=cbar_label)
+            self.plot(ax=ax, colorbar=colorbar, cbar_label=cbar_label, autoscale_view=autoscale_view)
  
         fig = self._ax.figure
 
         self.set_clim(global_min, global_max)
+        self._ax.set_xlim(xlim[0], xlim[1])
+        self._ax.set_ylim(ylim[0], ylim[1])
  
         def _update(frame_values):
             self.set_values(frame_values)
@@ -768,6 +773,13 @@ def load_hyg_catalog(path, mag_limit=6.0, named_only=False): # Function that han
 
     return catalog
 
+def load_sources_file(path):
+    result = pd.read_csv(path)
+    result_form =  [
+        {ke: float(result[ke][i]) if ke != 'name' else result[ke][i] for ke in result.columns} for i in range(len(result))
+    ]
+    return result_form
+
 def clean_image(a0, p1 = 8, p2 = 4): # This cleans a image from background so that star detection is easier
     
     return a0
@@ -855,7 +867,7 @@ def fetch_pointing(run, sr = None, time = None, run_info_path = './pSCT_Run_Log-
 def get_value_from_filename(filename, a, b):
     return int(filename.split(a, 1)[1].split(b, 1)[0])
 
-def get_star_parameters_from_subrun_physical(a0, time_str, ra_center, dec_center, psct_config, catalog, sources = None, thresh = 1.5, minarea=5, filter_type='matched', deblend_nthresh=32, deblend_cont=0.005, clean=True, clean_param=1.0, segmentation_map=False,  distance_of_margin = 53, min_matches_fraction = 0.1, pixel_tol = 13, max_control_points = 50, detection_sigma = 5, min_area = 5): # This function acquires the many parameters that describes the star field and source field in the camera at a given subrun
+def get_star_parameters_from_subrun_physical(a0, time_str, ra_center, dec_center, psct_config, catalog, sources = None, thresh = 1.5, minarea=5, filter_type='matched', deblend_nthresh=32, deblend_cont=0.005, clean=True, clean_param=1.0, segmentation_map=False,  distance_of_margin = None, min_matches_fraction = 0.1, pixel_tol = 13, max_control_points = 50, detection_sigma = 5, min_area = 5): # This function acquires the many parameters that describes the star field and source field in the camera at a given subrun
     module_pitch = float(psct_config['module_pitch'])
     module_width = float(psct_config['module_width'])
     if sources != None:
@@ -870,14 +882,23 @@ def get_star_parameters_from_subrun_physical(a0, time_str, ra_center, dec_center
     a_pro = a.copy()
     a_pro[a_pro == 0.0] = np.nan # Pixels that did not fetch data are usually at 0.0 -> go to nan
     a_mask = a_pro.copy() # For a boolean mask
-    a_mask[a_pro == np.nan] = False
-    a_mask[a_pro != np.nan] = True
+    a_mask[a_pro == np.nan] = True
+    a_mask[a_pro != np.nan] = False
     # bkg = sep.Background(a, mask = a_mask) 
-    objects = sep.extract(a, thresh = thresh, minarea=minarea, filter_type=filter_type, deblend_nthresh=deblend_nthresh, deblend_cont=deblend_cont, clean=clean, clean_param=clean_param, segmentation_map=segmentation_map, filter_kernel=None)
-    # x_detected = np.array([pixel_to_length(obj[7]-60+0.5, module_pitch = module_pitch, module_length=module_width) for obj in objects])
-    # y_detected = np.array([pixel_to_length(obj[8]-60+0.5, module_pitch = module_pitch, module_length=module_width) for obj in objects])
-    x_detected = np.array([pixel_to_length(obj[7]-60, module_pitch = module_pitch, module_length=module_width) for obj in objects])
-    y_detected = np.array([pixel_to_length(obj[8]-60, module_pitch = module_pitch, module_length=module_width) for obj in objects])
+    objects = sep.extract(a, thresh = thresh, minarea=minarea, filter_type=filter_type, deblend_nthresh=deblend_nthresh, deblend_cont=deblend_cont, clean=clean, clean_param=clean_param, segmentation_map=segmentation_map, filter_kernel=None, 
+                          mask = a_mask, 
+                        #   err=bkg.globalrms
+                        )
+    x_detected = [pixel_to_length(obj[7]-60+0.5, module_pitch = module_pitch, module_length=module_width) for obj in objects]
+    y_detected = [pixel_to_length(obj[8]-60+0.5, module_pitch = module_pitch, module_length=module_width) for obj in objects]
+    
+    # x_detected = [pixel_to_length(obj[7]-60, module_pitch = module_pitch, module_length=module_width) for obj in objects]
+    # y_detected = [pixel_to_length(obj[8]-60, module_pitch = module_pitch, module_length=module_width) for obj in objects]
+
+
+    x_detected = np.array([x for _, x in sorted(zip([obj[21] for obj in objects], x_detected), key=lambda pair: pair[0], reverse=True)])
+    y_detected = np.array([y for _, y in sorted(zip([obj[21] for obj in objects], y_detected), key=lambda pair: pair[0], reverse=True)])
+    objects = [objs for _, objs in sorted(zip([obj[21] for obj in objects], objects), key=lambda pair: pair[0], reverse=True)]
 
     # Listing possible stars in the field
     stars = get_visible_stars(
@@ -895,14 +916,20 @@ def get_star_parameters_from_subrun_physical(a0, time_str, ra_center, dec_center
             lat=float(psct_config['lat']), lon=float(psct_config['lon']), elevation=float(psct_config['elevation']),
             catalog=sources_list
         )
-    
-    x_predicted = np.array([s['x'] for s in stars])
-    y_predicted = np.array([s['y'] for s in stars])
 
-    x_src_predicted = np.array([s['x'] for s in sources_pred])
-    y_src_predicted = np.array([s['y'] for s in sources_pred])
+    x_predicted = [x for _, x in sorted(zip([s['mag'] for s in stars], [s['x'] for s in stars]), key=lambda pair: pair[0], reverse=False)]
+    y_predicted = [y for _, y in sorted(zip([s['mag'] for s in stars], [s['y'] for s in stars]), key=lambda pair: pair[0], reverse=False)]
+    stars = [s for _, s in sorted(zip([s['mag'] for s in stars], stars), key=lambda pair: pair[0], reverse=False)]
+    # x_predicted = np.array([s['x'] for s in stars])
+    # y_predicted = np.array([s['y'] for s in stars])
 
-    nearby_predicted = [(x, y) for x, y in zip(x_predicted, y_predicted) if np.min((x - x_detected)**2+(y - y_detected)**2) < distance_of_margin**2]
+    x_src_predicted = [s['x'] for s in sources_pred]
+    y_src_predicted = [s['y'] for s in sources_pred]
+
+    if distance_of_margin != None:
+        nearby_predicted = [(x, y) for x, y in zip(x_predicted, y_predicted) if np.min((x - x_detected)**2+(y - y_detected)**2) < distance_of_margin**2]
+    else:
+        nearby_predicted = [(x, y) for x, y in zip(x_predicted, y_predicted) if np.min((x - x_detected)**2+(y - y_detected)**2) < 130**2]
 
     found_turples = [(x, y) for x, y in zip(x_detected, y_detected)]
 
@@ -914,31 +941,35 @@ def get_star_parameters_from_subrun_physical(a0, time_str, ra_center, dec_center
     aa.PIXEL_TOL = pixel_tol
     try:
         transf, (source_list, target_list) = aa.find_transform(nearby_predicted, found_turples, max_control_points = max_control_points, detection_sigma = detection_sigma, min_area = min_area)
-        dst_calc = aa.matrix_transform(sources_turple, transf.params)
-
-        for ind, x, y in zip(range(len(sources_pred)), [ob[0] for ob in dst_calc], [ob[1] for ob in dst_calc]):
-            sources_pred[ind]['x'] = x
-            sources_pred[ind]['y'] = y
-
         dst_calc = aa.matrix_transform([(x, y) for x, y in zip(x_predicted, y_predicted)], transf.params)
         for ind, x, y in zip(range(len(stars)), [ob[0] for ob in dst_calc], [ob[1] for ob in dst_calc]):
             stars[ind]['x'] = x
             stars[ind]['y'] = y
 
+        # print([(x, y) for x, y in zip(x_predicted, y_predicted)])
+        if len(sources_turple) > 0:
+            dst_calc = aa.matrix_transform(sources_turple, transf.params)
 
-        deltas, rot_ang = transf.translation, transf.rotation
+            for ind, x, y in zip(range(len(sources_pred)), [ob[0] for ob in dst_calc], [ob[1] for ob in dst_calc]):
+                sources_pred[ind]['x'] = x
+                sources_pred[ind]['y'] = y
+
+
+        deltas, rot_ang, scal_fact = transf.translation, transf.rotation, transf.scale
         delta_x, delta_y = deltas
-        return a, objects, x_detected, y_detected, stars, x_predicted, y_predicted, sources_pred, delta_x, delta_y, rot_ang, transf, nearby_predicted, found_turples 
+        return a, objects, x_detected, y_detected, stars, x_predicted, y_predicted, sources_pred, x_src_predicted, y_src_predicted, delta_x, delta_y, rot_ang, scal_fact, transf, nearby_predicted, found_turples 
     except:
         print(f'Finding a match failed!')
-        for ind, x, y in zip(range(len(sources_pred)), [ob for ob in x_src_predicted], [ob for ob in y_src_predicted]):
-            sources_pred[ind]['x'] = x
-            sources_pred[ind]['y'] = y
+        if len(sources_turple) > 0:
+            for ind, x, y in zip(range(len(sources_pred)), [ob for ob in x_src_predicted], [ob for ob in y_src_predicted]):
+                sources_pred[ind]['x'] = x
+                sources_pred[ind]['y'] = y
 
         for ind, x, y in zip(range(len(stars)), [ob for ob in x_predicted], [ob for ob in y_predicted]):
             stars[ind]['x'] = x
             stars[ind]['y'] = y
-        return a, objects, x_detected, y_detected, stars, x_predicted, y_predicted, sources_pred, None, None, None, None, nearby_predicted, found_turples 
+        return a, objects, x_detected, y_detected, stars, x_predicted, y_predicted, sources_pred, x_src_predicted, y_src_predicted, None, None, None, None, None, nearby_predicted, found_turples 
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -947,6 +978,7 @@ def main():
     parser.add_argument("-si", "--save_plots", help="Whether the script saves images of the plots", action='store_true')
     parser.add_argument("-rc", "--recollect", help="Whether the script re-collects the r1 data stats", action='store_true')
     parser.add_argument("-config", "--configurations", help="path to config file", default='./settings.yaml')
+    parser.add_argument("-sources", "--sources_of_interest", help="path to sources of interest", default='./sources.csv')
     args = parser.parse_args()
 
     #### Settings loaded
@@ -964,6 +996,7 @@ def main():
     catalog_path = dval['analysis_options']['catalog_path']
     telescope_config = dval['analysis_options']['telescope_config']
     run_info_path = dval['analysis_options']['run_info_path']
+    limit_gigabytes = dval['analysis_options']['limit_gigabytes']
 
 
     ##### 
@@ -982,7 +1015,7 @@ def main():
         for sr in sorted([int(get_value_from_filename(fil, '_subrun', '_r1.tio')) for fil in glob.glob(subrun_files.format(run, '*'))]):
             if run not in bad_srs.keys():
                 bad_srs[run] = []
-            if sr not in bad_srs[run]:
+            if sr not in bad_srs[run] and (os.path.getsize(subrun_files.format(run, sr))/1E9) < limit_gigabytes:
                 reader = target_io.WaveformArrayReader(subrun_files.format(run, sr)) # Load reader object
 
                 wfs_me0, wfs_sq0, times0 = read_wfs_metrics(None, reader = reader) # Calculate the waveforms means and mean of the squares, per pixel per event (this filters events with strong charges out)
@@ -1020,6 +1053,7 @@ def main():
 
     psct_config = load_config(telescope_config) # Gets information about the telescope, like longitude, latitude, elevation, FoV
     catalog = load_hyg_catalog(catalog_path, mag_limit=10, named_only=False) # Loads star catalog
+    sources_of_interest = load_sources_file(args.sources_of_interest)
 
     st = tm.time()
     frames = []
@@ -1031,13 +1065,14 @@ def main():
     # base_timestamp = 1776574920.7772014
     timess = [int(t) for t in times]
     abs_times = []
-    # print(timess[0])
+    print(timess[0])
     for ind, t in enumerate(timess):
         if (t - timess[arg_l]) > P:
             arg = arg_l
             arg_l = ind
 
-            frames.append(get_gbmean([((wfs_sq_on - wfs_me_on**2)) for wfs_sq_on, wfs_me_on in zip(wfs_sq[arg:arg_l], wfs_me[arg:arg_l])], None).reshape(1600 // 64, 64))
+            frames.append(get_gbmean2(np.array([((wfs_sq_on - wfs_me_on**2)) for wfs_sq_on, wfs_me_on in zip(wfs_sq[arg:arg_l], wfs_me[arg:arg_l])]), None).reshape(1600 // 64, 64))
+            # frames.append(get_gbmean2(np.array([((wfs_sq_on)) for wfs_sq_on, wfs_me_on in zip(wfs_sq[arg:arg_l], wfs_me[arg:arg_l])]), None).reshape(1600 // 64, 64))
 
             delta_t = (np.mean(timess[arg:arg_l+1]) - timess[0])/(1E9)
             timestamp_ev = convert_to_utc_str(base_timestamp + delta_t)
@@ -1053,14 +1088,25 @@ def main():
     # frames_med[frames_med == 0.0] = np.nan
     # frames_med.sort(axis=0)
     frames_med = np.nanmedian(frames_med, axis = 0)
+    # # Scaled background
+    # frames_med = frames_med/np.nanmean(frames_med)
+    # frames_med[np.isnan(frames_med)] = 0.0
+    # fra_mean_ref = frames_arr.copy()
+    # fra_mean_ref[fra_mean_ref == 0.0] = np.nan
 
-    frames_med = frames_med/np.nanmean(frames_med)
+    # fra_plot = [np.array([fra - np.nanmean(fra_m)*frames_med for fra, fra_m in zip(frames_arr, fra_mean_ref)])]
+
+    # Fixed background
+    frames_med = frames_med
     frames_med[np.isnan(frames_med)] = 0.0
     fra_mean_ref = frames_arr.copy()
     fra_mean_ref[fra_mean_ref == 0.0] = np.nan
 
-    fra_plot = [np.array([fra - np.nanmean(fra_m)*frames_med for fra, fra_m in zip(frames_arr, fra_mean_ref)])]
-    bkg_base = np.load('./background.npy')
+    fra_plot = [np.array([fra - frames_med for fra, fra_m in zip(frames_arr, fra_mean_ref)])]
+    # fra_plot = [np.array([fra for fra, fra_m in zip(frames_arr, fra_mean_ref)])]
+    np.save(f'{point_data_path}run{run}_background_subtracted.npy', frames_med)
+
+    # bkg_base = np.load('./background.npy')
     list_frames = []
     for fra0 in fra_plot[0]:
         fra = fra0.copy()
@@ -1072,8 +1118,8 @@ def main():
 
     if args.save_plots:
         camdisp = CameraDisplay()
-
-        camdisp.animate(list_frames, interval = 200, plot_title=f'Star Movie for Run {run}\n{convert_to_utc_str(base_timestamp)} UTC')
+        fps = 4
+        camdisp.animate(list_frames, interval = (1/fps)*1000, plot_title=f'Star Movie for Run {run}\n{convert_to_utc_str(base_timestamp)} UTC', xlim=[-145, 145], ylim=[125, 415])
         camdisp.save(f'{ani_path}run{run}_star-movie.gif')
 
     print(f'TIME INFO: Making all the frames for run {run} took {(tm.time() - st)/60} mins')
@@ -1089,6 +1135,8 @@ def main():
         'y': [],
         'x_mm': [],
         'y_mm': [],
+        'x_mm_nominal' : [],
+        'y_mm_nominal' : [],
         'time_utc': [],
         'time_abs': []
     }
@@ -1098,6 +1146,8 @@ def main():
         'y_c': [],
         'x_c_mm': [],
         'y_c_mm': [],
+        'rot_ang' : [],
+        'scale_factor' : [],
         'time_utc': [],
         'time_abs': []
     }
@@ -1112,10 +1162,10 @@ def main():
     camdisp = CameraDisplay()
     for a0, time in zip(list_frames, abs_times):
         time_str = convert_to_utc_str(time)
-        a, objects, x_detected, y_detected, stars, x_predicted, y_predicted, dst_calc, delta_x, delta_y, rot_ang, transf, nearby_predicted, found_turples = get_star_parameters_from_subrun_physical(a0, time_str, ra_center, dec_center, psct_config, catalog, sources_of_interest,
-            thresh = 0.5, filter_type='matched', minarea = 2, deblend_nthresh=32, deblend_cont=0.005, 
-            clean=False, clean_param=1.0, segmentation_map=False, distance_of_margin = 45, 
-            min_matches_fraction = 0.2, pixel_tol = 13, max_control_points = 50, detection_sigma = 2, min_area = 3
+        a, objects, x_detected, y_detected, stars, x_predicted, y_predicted, dst_calc, x_src_predicted, y_src_predicted, delta_x, delta_y, rot_ang, scal_fact, transf, nearby_predicted, found_turples = get_star_parameters_from_subrun_physical(a0, time_str, ra_center, dec_center, psct_config, catalog, sources_of_interest,
+            thresh = 2, filter_type='conv', minarea = 1, deblend_nthresh=32, deblend_cont=0.005, 
+            clean=True, clean_param=1.0, segmentation_map=False, distance_of_margin = 60, 
+            min_matches_fraction = 0.4, pixel_tol = 13, max_control_points = 50, detection_sigma = 5, min_area = 2
         )
 
         # im = ax.imshow(a, interpolation=None, origin = 'lower', vmin = 0, vmax = 5, extent = [-60, 60, -60, 60])
@@ -1150,6 +1200,7 @@ def main():
                             (j - 0.5, i - 0.5), 40, 40,
                             linewidth=1.2*(size/8), edgecolor="#555555", facecolor="none"
                         ))
+
             # Plotting markers for detected stars
             for x, y, flu in zip(x_detected, y_detected, [obj[21] for obj in objects]):
 
@@ -1169,16 +1220,10 @@ def main():
                     # ax.plot(x, y, marker = "*", color = 'yellow', alpha = 0.6)#, markersize = 7*np.sqrt(flu/75))
 
                     ax.plot(turp[0], turp[1], marker = "+", color = 'yellow', alpha = 0.6)#, markersize = 7*np.sqrt(flu/75))
-                    if name in ['49    UMa']:
-                        # ax.text(x, y, f'{name}', fontsize = 10)
-                        # ax.text(pixel_to_length(x), pixel_to_length(y), f'{name}', fontsize = 10)
-
-
-                        
-                        ax.text(turp[0], turp[1], f'{name}', fontsize = 5)
+                    ax.text(turp[0], turp[1], f'{name}', fontsize = 5)
 
                 else:
-                    ax.plot(turp[0], turp[1], marker = "*", color = 'yellow', alpha = 0.1)
+                    ax.plot(turp[0], turp[1], marker = "*", color = 'yellow', alpha = 0.2)
         if delta_x == None:
             if save:
                 for turp0 in nearby_predicted:
@@ -1191,31 +1236,34 @@ def main():
         if delta_x != None:
             matrices.append(transf.params)
             frames.append(a)
-            if save:
-                for x, y, name in zip([ob['x'] for ob in dst_calc], [ob['y'] for ob in dst_calc], [ob['name'] for ob in dst_calc]):
-                    # ax.plot(x, y, marker = "+", color = "#01FFEE", markersize = 10)
-                    # ax.text(x, y, f'{name}', fontsize = 15)
+            for x, y, name in zip([ob['x'] for ob in dst_calc], [ob['y'] for ob in dst_calc], [ob['name'] for ob in dst_calc]):
+                # ax.plot(x, y, marker = "+", color = "#01FFEE", markersize = 10)
+                # ax.text(x, y, f'{name}', fontsize = 15)
 
-                    # ax.plot(pixel_to_length(x), pixel_to_length(y), marker = "+", color = "#01FFEE", markersize = 10)
-                    # ax.text(pixel_to_length(x), pixel_to_length(y), f'{name}', fontsize = 15)
+                # ax.plot(pixel_to_length(x), pixel_to_length(y), marker = "+", color = "#01FFEE", markersize = 10)
+                # ax.text(pixel_to_length(x), pixel_to_length(y), f'{name}', fontsize = 15)
 
-                    turp = transforming((x, y)) #  transforming((pixel_to_length(x), pixel_to_length(y)))
+                turp = transforming((x, y)) #  transforming((pixel_to_length(x), pixel_to_length(y)))
 
 
-                    ax.plot(turp[0], turp[1], marker = "+", color = "#01FFEE", markersize = 10)
-                    text_mrk = ax.text(turp[0], turp[1], f'{name}', fontsize = 15)
-                    text_mrk.set_path_effects([fx.Stroke(linewidth=1, foreground='1.0'), fx.Normal()])
+                ax.plot(turp[0], turp[1], marker = "+", color = "#01FFEE", markersize = 10)
+                text_mrk = ax.text(turp[0], turp[1], f'{name}', fontsize = 15)
+                text_mrk.set_path_effects([fx.Stroke(linewidth=1, foreground='1.0'), fx.Normal()])
 
-            turp_px = transforming((length_to_pixel(dst_calc[0]['x']), length_to_pixel(dst_calc[0]['y']))) # transforming((dst_calc[0]['x'], dst_calc[0]['y']))
-            turp_mm = transforming((dst_calc[0]['x'], dst_calc[0]['y'])) # transforming((pixel_to_length(dst_calc[0]['x']), pixel_to_length(dst_calc[0]['y'])))
+            for ind, sourc in enumerate(dst_calc):
+                turp_px = transforming((length_to_pixel(sourc['x']), length_to_pixel(sourc['y']))) # transforming((dst_calc[0]['x'], dst_calc[0]['y']))
+                turp_mm = transforming((sourc['x'], sourc['y'])) # transforming((pixel_to_length(dst_calc[0]['x']), pixel_to_length(dst_calc[0]['y'])))
+                turp_mm_nom = transforming((x_src_predicted[ind], y_src_predicted[ind])) # transforming((pixel_to_length(dst_calc[0]['x']), pixel_to_length(dst_calc[0]['y'])))
 
-            dict_data['name'].append('Mrk 421')
-            dict_data['x'].append(turp_px[0])
-            dict_data['y'].append(turp_px[1])
-            dict_data['x_mm'].append(turp_mm[0])
-            dict_data['y_mm'].append(turp_mm[1])
-            dict_data['time_abs'].append(time)
-            dict_data['time_utc'].append(time_str)
+                dict_data['name'].append(sourc['name'])
+                dict_data['x'].append(turp_px[0])
+                dict_data['y'].append(turp_px[1])
+                dict_data['x_mm'].append(turp_mm[0])
+                dict_data['y_mm'].append(turp_mm[1])
+                dict_data['x_mm_nominal'].append(turp_mm_nom[0])
+                dict_data['y_mm_nominal'].append(turp_mm_nom[1])
+                dict_data['time_abs'].append(time)
+                dict_data['time_utc'].append(time_str)
 
             turp_cen_px = transforming((length_to_pixel(delta_x), length_to_pixel(delta_y))) # transforming((delta_x, delta_y))
             turp_cen_mm = transforming((delta_x, delta_y)) # transforming((pixel_to_length(delta_x), pixel_to_length(delta_y)))
@@ -1224,6 +1272,8 @@ def main():
             offset_data['y_c'].append(turp_cen_px[1])
             offset_data['x_c_mm'].append(turp_cen_mm[0])
             offset_data['y_c_mm'].append(turp_cen_mm[1])
+            offset_data['rot_ang'].append(rot_ang)
+            offset_data['scale_factor'].append(scal_fact)
             offset_data['time_abs'].append(time)
             offset_data['time_utc'].append(time_str)
 
