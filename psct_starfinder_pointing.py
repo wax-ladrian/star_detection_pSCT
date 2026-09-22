@@ -13,7 +13,7 @@ import matplotlib.patches as mpatches
 from matplotlib.collections import PatchCollection
 from matplotlib.colors import Normalize
 from matplotlib.animation import FuncAnimation
-import matplotlib. patheffects as fx
+import matplotlib.patheffects as fx
 
 import time as tm
 
@@ -1330,7 +1330,7 @@ def main():
     if save: ext_str = ''
     print(f'TIME INFO: Fitting all the frames for run {run} took {(tm.time() - st)/60} mins with{ext_str} saving plots')
 
-    if save:
+    if save and len(sources_of_interest['name'])>0:
         fig, ax = plt.subplots()
         # for i in range(-60, a.shape[1]-60, 40):
         #     for j in range(-60, a.shape[1]-60, 40):
@@ -1352,17 +1352,27 @@ def main():
             for k in range(base_frame.shape[1]):
                 if not np.isnan(base_frame[k, l]):
                     ax.add_patch(mpatches.Rectangle((pixel_to_length(l-60, float(psct_config['module_width']), float(psct_config['module_pitch']))+space, pixel_to_length(k-60, float(psct_config['module_width']), float(psct_config['module_pitch']))+space), float(psct_config['pixel_size']), float(psct_config['pixel_size']), edgecolor="#41414170", facecolor="#4141412A", alpha = 0.15))
-        sc = ax.scatter([x for x in dict_data['x_mm'] if isinstance(x, (float))], [y for y in dict_data['y_mm'] if isinstance(y, (float))], c = (np.array([t for x, t in zip(dict_data['x_mm'], dict_data['time_abs']) if  isinstance(x, (float))])-dict_data['time_abs'][0])/(60), marker = 'o', cmap='viridis', label = 'Estimated path')
+        times_f = np.array([t for x, t in zip(dict_data['x_mm'], dict_data['time_abs']) if  isinstance(x, (float))])
+        # if len(times_f) > 0:
+        #     t_corr = float(times_f[0])
+        # else:
+        #     print(f'length is 0 and number of frames is {len(list_frames)}')
+        #     t_corr = 0.0
+        sc = ax.scatter([x for x in dict_data['x_mm'] if isinstance(x, (float))], [y for y in dict_data['y_mm'] if isinstance(y, (float))], c = (np.array([t for x, t in zip(dict_data['x_mm'], dict_data['time_abs']) if  isinstance(x, (float))])-offset_data['time_abs'][0])/(60), marker = 'o', cmap='viridis', label = 'Estimated path')
         ax.plot(dict_data['x_mm_nominal'], dict_data['y_mm_nominal'], c='black', label = 'Nominal path', marker='o')
         ax.set_xlabel('CORSIKA x-axis [mm]')
         ax.set_ylabel('CORSIKA y-axis [mm]')
-        ax.set_title(f'Mrk 421 camera path for run {run} with P = {P/1E9}s')
+        ax.set_title(f'{sources_of_interest['name']} camera path for run {run} with P = {P/1E9}s')
         cbar = fig.colorbar(sc, ax=ax)
         ax.legend()
-        cbar.set_label(f"Time from {dict_data['time_utc'][0]} [min]")
+        cbar.set_label(f"Time from {offset_data['time_utc'][0]} [min]")
         plt.axis('scaled')
-        ax.set_xlim(min((min([x for x in dict_data['x_mm'] if isinstance(x, (float))]) - 20), -420), max((max([x for x in dict_data['x_mm'] if isinstance(x, (float))]) + 20), -110))
-        ax.set_ylim(min((min([y for y in dict_data['y_mm'] if isinstance(y, (float))]) - 20), -160), max((max([y for y in dict_data['y_mm'] if isinstance(y, (float))]) + 20), 160))
+        if len(dict_data['x_mm']) > 0:
+            ax.set_xlim(min((min([x for x in dict_data['x_mm'] if isinstance(x, (float))]) - 20), -420), max((max([x for x in dict_data['x_mm'] if isinstance(x, (float))]) + 20), -110))
+            ax.set_ylim(min((min([y for y in dict_data['y_mm'] if isinstance(y, (float))]) - 20), -160), max((max([y for y in dict_data['y_mm'] if isinstance(y, (float))]) + 20), 160))
+        else:
+            ax.set_xlim(-420, -110)
+            ax.set_ylim(-160, 160)
         fig.savefig(f"{point_data_path}run{run}_star_matched/run{run}_targets-trajectory.jpeg")
         print(f'Trajectory plot took {tm.time() - st} seconds')
         plt.close()
