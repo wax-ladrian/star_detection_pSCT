@@ -1362,7 +1362,7 @@ def main():
         ax.plot(dict_data['x_mm_nominal'], dict_data['y_mm_nominal'], c='black', label = 'Nominal path', marker='o')
         ax.set_xlabel('CORSIKA x-axis [mm]')
         ax.set_ylabel('CORSIKA y-axis [mm]')
-        ax.set_title(f'{sources_of_interest['name']} camera path for run {run} with P = {P/1E9}s')
+        ax.set_title(f"{sources_of_interest['name']} camera path for run {run} with P = {P/1E9}s")
         cbar = fig.colorbar(sc, ax=ax)
         ax.legend()
         cbar.set_label(f"Time from {offset_data['time_utc'][0]} [min]")
