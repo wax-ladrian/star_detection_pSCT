@@ -14,6 +14,8 @@ from matplotlib.collections import PatchCollection
 from matplotlib.colors import Normalize
 from matplotlib.animation import FuncAnimation
 import matplotlib.patheffects as fx
+from scipy.optimize import linear_sum_assignment
+
 
 import time as tm
 
@@ -41,6 +43,9 @@ import csv
 
 
 make_nans = False
+
+scale_factor_bounds = [0.9, 1.1]
+rot_ang_bounds = [-0.1, 0.1]
 
 pxs_p_quad = 16 # Part of the camera geometry builder: pixels per quadrants
 quads_p_module = 4 # Part of the camera geometry builder: quadrants per module
@@ -78,6 +83,60 @@ fpms_exist = { # Which modules actually exist in each sector
     "4": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
     "7": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
 }
+
+def umeyama_similarity(src: np.ndarray, dst: np.ndarray, with_scaling: bool = True):
+    """
+    Least-squares estimate of the similarity transform T(p) = s * R @ p + t
+    that maps `src` points onto `dst` points, i.e. minimizes
+        sum_i || dst_i - (s * R @ src_i + t) ||^2
+
+        
+    Parameters
+    ----------
+    src, dst : (K, 2) arrays of CORRESPONDING points (src[i] <-> dst[i])
+    with_scaling : if False, forces s = 1 (rigid transform only)
+
+    Returns
+    -------
+    s : float, isotropic scale
+    R : (2,2) rotation matrix
+    t : (2,) translation vector
+    """
+    src = np.asarray(src, dtype=float)
+    dst = np.asarray(dst, dtype=float)
+    assert src.shape == dst.shape and src.shape[1] == 2, "src/dst must be (K,2) and same shape"
+    n = src.shape[0]
+    if n < 2:
+        raise ValueError("Need at least 2 corresponding points to fit a similarity transform.")
+
+    mu_src = src.mean(axis=0)
+    mu_dst = dst.mean(axis=0)
+    src_c = src - mu_src
+    dst_c = dst - mu_dst
+
+    # Cross-covariance
+    cov = (dst_c.T @ src_c) / n
+    U, D, Vt = np.linalg.svd(cov)
+
+    S = np.eye(2)
+    if np.linalg.det(U) * np.linalg.det(Vt) < 0:
+        S[-1, -1] = -1  # correct for reflection
+
+    R = U @ S @ Vt
+
+    if with_scaling:
+        var_src = (src_c ** 2).sum() / n
+        s = np.trace(np.diag(D) @ S) / var_src
+    else:
+        s = 1.0
+
+    t = mu_dst - s * R @ mu_src
+    return s, R, t
+
+
+def apply_transform(points_xy: np.ndarray, s: float, R: np.ndarray, t: np.ndarray) -> np.ndarray:
+    """Apply T(p) = s*R@p + t to an array of (K,2) points."""
+    return (s * (R @ points_xy.T)).T + t
 
 def load_csv(path):
     result = pd.read_csv(path)
@@ -997,6 +1056,12 @@ def main():
     telescope_config = dval['analysis_options']['telescope_config']
     run_info_path = dval['analysis_options']['run_info_path']
     limit_gigabytes = dval['analysis_options']['limit_gigabytes']
+    scale_factor_bounds = dval['analysis_options']['bounds_scale_factor']
+    rot_ang_bounds = dval['analysis_options']['bounds_rotation_angle']
+
+    psct_config = load_config(telescope_config) # Gets information about the telescope, like longitude, latitude, elevation, FoV
+    catalog = load_hyg_catalog(catalog_path, mag_limit=10, named_only=False) # Loads star catalog
+    sources_of_interest = load_sources_file(args.sources_of_interest)
 
 
     ##### 
@@ -1050,10 +1115,6 @@ def main():
         wfs_sq = np.load(f'{npy_paths}wfs_mean_sq_run{run}.npy')
         times = np.load(f'{npy_paths}wfs_times_run{run}.npy')
         print(f'TIME INFO: Loading all the data for run {run} took {(tm.time() - st)/60} mins')
-
-    psct_config = load_config(telescope_config) # Gets information about the telescope, like longitude, latitude, elevation, FoV
-    catalog = load_hyg_catalog(catalog_path, mag_limit=10, named_only=False) # Loads star catalog
-    sources_of_interest = load_sources_file(args.sources_of_interest)
 
     st = tm.time()
     frames = []
@@ -1320,7 +1381,29 @@ def main():
             offset_data['time_utc'].append(time_str)
             if save: fig.savefig(f"{point_data_path}run{run}_star_matched/full_frame_camera/run{run}_failed-frame_{time_str.replace(':','-')}.jpeg")
         plt.close()
-
+    if len(dict_data['x_mm']) > 0:
+        nom_matched = np.array([[float(x), float(y)] for x, y, x_m, s, r in zip(dict_data['x_mm_nominal'], dict_data['y_mm_nominal'], dict_data['x_mm'], offset_data['scale_factor'], offset_data['rot_ang']) if (not np.isnan(float(x_m)) and r > rot_ang_bounds[0] and r < rot_ang_bounds[1] and s > scale_factor_bounds[0] and s < scale_factor_bounds[1])])
+        meas_matched = np.array([[float(x), float(y)] for x, y, s, r in zip(dict_data['x_mm'], dict_data['y_mm'], offset_data['scale_factor'], offset_data['rot_ang']) if (not np.isnan(float(x)) and r > rot_ang_bounds[0] and r < rot_ang_bounds[1] and s > scale_factor_bounds[0] and s < scale_factor_bounds[1])]) # isinstance(float(x), (float))
+        nom_all = np.array([[float(x), float(y)] for x, y in zip(dict_data['x_mm_nominal'], dict_data['y_mm_nominal'])])
+        tim_abs_arr = [t for t in dict_data['time_abs']]
+        tim_utc_arr = [t for t in dict_data['time_utc']]
+        try:
+            s, R, t = umeyama_similarity(nom_matched, meas_matched, with_scaling=True)
+            est_list = apply_transform(nom_all, s=s, R=R, t=t)
+            est_list_x = [l[0] for l in est_list]
+            est_list_y = [l[1] for l in est_list]
+            dict_estimated = {
+                'name': [sources_of_interest[0]['name'] for _ in range(len(est_list_y))],
+                'x_mm_estimated': est_list_x,
+                'y_mm_estimated': est_list_y,
+                'time_abs': tim_abs_arr,
+                'time_utc': tim_utc_arr
+            }
+            pd.DataFrame.from_dict(dict_estimated).to_csv(f'{point_data_path}run{run}_star_matched/run{run}_estimated_positions_mrk421.csv')
+        except:
+            est_list_x = []
+            est_list_y = []
+            print(f'Estimated path failed to fit: only {len(meas_matched)} points passed the filter')
     pd.DataFrame.from_dict(dict_data).to_csv(f'{point_data_path}run{run}_star_matched/run{run}_positions_mrk421.csv')
     pd.DataFrame.from_dict(offset_data).to_csv(f'{point_data_path}run{run}_star_matched/run{run}_center_offsets.csv')
     np.save(f'{point_data_path}run{run}_star_matched/run{run}_transformation_matrices.npy', np.array(matrices))
@@ -1330,7 +1413,7 @@ def main():
     if save: ext_str = ''
     print(f'TIME INFO: Fitting all the frames for run {run} took {(tm.time() - st)/60} mins with{ext_str} saving plots')
 
-    if save and len(sources_of_interest['name'])>0:
+    if save and len(sources_of_interest)>0:
         fig, ax = plt.subplots()
         # for i in range(-60, a.shape[1]-60, 40):
         #     for j in range(-60, a.shape[1]-60, 40):
@@ -1352,17 +1435,19 @@ def main():
             for k in range(base_frame.shape[1]):
                 if not np.isnan(base_frame[k, l]):
                     ax.add_patch(mpatches.Rectangle((pixel_to_length(l-60, float(psct_config['module_width']), float(psct_config['module_pitch']))+space, pixel_to_length(k-60, float(psct_config['module_width']), float(psct_config['module_pitch']))+space), float(psct_config['pixel_size']), float(psct_config['pixel_size']), edgecolor="#41414170", facecolor="#4141412A", alpha = 0.15))
-        times_f = np.array([t for x, t in zip(dict_data['x_mm'], dict_data['time_abs']) if  isinstance(x, (float))])
         # if len(times_f) > 0:
         #     t_corr = float(times_f[0])
         # else:
         #     print(f'length is 0 and number of frames is {len(list_frames)}')
         #     t_corr = 0.0
-        sc = ax.scatter([x for x in dict_data['x_mm'] if isinstance(x, (float))], [y for y in dict_data['y_mm'] if isinstance(y, (float))], c = (np.array([t for x, t in zip(dict_data['x_mm'], dict_data['time_abs']) if  isinstance(x, (float))])-offset_data['time_abs'][0])/(60), marker = 'o', cmap='viridis', label = 'Estimated path')
         ax.plot(dict_data['x_mm_nominal'], dict_data['y_mm_nominal'], c='black', label = 'Nominal path', marker='o')
+        sc = ax.scatter([x for x in dict_data['x_mm'] if isinstance(x, (float))], [y for y in dict_data['y_mm'] if isinstance(y, (float))], c = (np.array([t for x, t in zip(dict_data['x_mm'], dict_data['time_abs']) if  isinstance(x, (float))])-offset_data['time_abs'][0])/(60), marker = 'o', cmap='viridis', label = 'Measured path')
+        if len(est_list_x) > 0:
+            ax.plot(est_list_x, est_list_y, marker='+', markersize = 5, c='red', label = 'Estimated path')
+
         ax.set_xlabel('CORSIKA x-axis [mm]')
         ax.set_ylabel('CORSIKA y-axis [mm]')
-        ax.set_title(f"{sources_of_interest['name']} camera path for run {run} with P = {P/1E9}s")
+        ax.set_title(f"{sources_of_interest[0]['name']} camera path for run {run} with P = {P/1E9}s")
         cbar = fig.colorbar(sc, ax=ax)
         ax.legend()
         cbar.set_label(f"Time from {offset_data['time_utc'][0]} [min]")

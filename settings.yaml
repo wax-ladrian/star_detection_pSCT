@@ -1,10 +1,12 @@
 analysis_options:
   animation_path : '/data/user/oriss/miscelaneous/Mrk421_pointing_information/'
-  npys_path : '/data/user/lriitano/mrk421_pointing/npy_files/' # '/data/user/oriss/data_stars/'
+  npys_path : '/data/wipac/CTA/mrk421/mrk421_pointing/npy_files/' # '/data/user/oriss/data_stars/'
   point_data_path : '/data/user/oriss/miscelaneous/Mrk421_pointing_information/'
   P_step : 60
   dpi_imgs : 800
   limit_gigabytes : 15
+  bounds_scale_factor : [0.8, 1.1]
+  bounds_rotation_angle : [-0.2, 0.2] # in radians
   log_files : "/data/wipac/CTA/targetcdata/run{0}_log.log"
   subrun_files : "/data/wipac/CTA/targetcdata/run{0}_subrun{1}_r1.tio"
   catalog_path : "/home/oriss/star_detection_pSCT/hyg_v42.csv"
