@@ -1035,6 +1035,7 @@ def main():
     parser.add_argument("-r", "--run", help="run to analyse", default=None)
     parser.add_argument("-srs", "--subruns", help="The highest subrun to analyse", default="0")
     parser.add_argument("-si", "--save_plots", help="Whether the script saves images of the plots", action='store_true')
+    parser.add_argument("-sb", "--standard_background", help="Whether the script uses a default background for background subtraction", action='store_true')
     parser.add_argument("-rc", "--recollect", help="Whether the script re-collects the r1 data stats", action='store_true')
     parser.add_argument("-config", "--configurations", help="path to config file", default='./settings.yaml')
     parser.add_argument("-sources", "--sources_of_interest", help="path to sources of interest", default='./sources.csv')
@@ -1058,6 +1059,8 @@ def main():
     limit_gigabytes = dval['analysis_options']['limit_gigabytes']
     scale_factor_bounds = dval['analysis_options']['bounds_scale_factor']
     rot_ang_bounds = dval['analysis_options']['bounds_rotation_angle']
+    fps_base = dval['analysis_options']['animation_fps']
+    threshold_source_finding = 2
 
     psct_config = load_config(telescope_config) # Gets information about the telescope, like longitude, latitude, elevation, FoV
     catalog = load_hyg_catalog(catalog_path, mag_limit=10, named_only=False) # Loads star catalog
@@ -1126,7 +1129,7 @@ def main():
     # base_timestamp = 1776574920.7772014
     timess = [int(t) for t in times]
     abs_times = []
-    print(timess[0])
+    # print(timess[0])
     for ind, t in enumerate(timess):
         if (t - timess[arg_l]) > P:
             arg = arg_l
@@ -1163,6 +1166,11 @@ def main():
     fra_mean_ref = frames_arr.copy()
     fra_mean_ref[fra_mean_ref == 0.0] = np.nan
 
+    
+    if args.standard_background:
+        frames_med = np.load('./background.npy')
+        threshold_source_finding = 2*threshold_source_finding
+
     fra_plot = [np.array([fra - frames_med for fra, fra_m in zip(frames_arr, fra_mean_ref)])]
     # fra_plot = [np.array([fra for fra, fra_m in zip(frames_arr, fra_mean_ref)])]
     np.save(f'{point_data_path}run{run}_background_subtracted.npy', frames_med)
@@ -1179,9 +1187,21 @@ def main():
 
     if args.save_plots:
         camdisp = CameraDisplay()
-        fps = 4
-        camdisp.animate(list_frames, interval = (1/fps)*1000, plot_title=f'Star Movie for Run {run}\n{convert_to_utc_str(base_timestamp)} UTC', xlim=[-145, 145], ylim=[125, 415])
+        fps = fps_base
+        camdisp.animate(list_frames, interval = (1/fps)*1000, plot_title=f'Star Movie for Run {run}\n{convert_to_utc_str(base_timestamp)} UTC', xlim=[-145, 145], ylim=[125, 415], cbar_label=r'$\left< \text{Var} \right> \text{ } [\text{ADC}^2 \text{ns}^2]_{ \text{(background subtracted)}}$')
         camdisp.save(f'{ani_path}run{run}_star-movie.gif')
+
+        camdisp = CameraDisplay()
+        fps = fps_base
+        camdisp.animate([f + frames_med for f in list_frames], interval = (1/fps)*1000, plot_title=f'Star Movie for Run {run}\n{convert_to_utc_str(base_timestamp)} UTC\n No background removal', xlim=[-145, 145], ylim=[125, 415], cbar_label=r'$\left< \text{Var} \right> \text{ } [\text{ADC}^2 \text{ns}^2]$')
+        camdisp.save(f'{ani_path}run{run}_star-movie_no_background_removal.gif')
+
+        camdisp = CameraDisplay(frames_med)
+        fig, ax = camdisp.plot(cbar_label = r'$\left< \text{Var} \right> \text{ } [\text{ADC}^2 \text{ns}^2]$')
+        ax.set_xlim([-145, 145])
+        ax.set_ylim([125, 415])
+        camdisp.save(f'{ani_path}run{run}_background_used.jpeg')
+    
 
     print(f'TIME INFO: Making all the frames for run {run} took {(tm.time() - st)/60} mins')
     save = args.save_plots
@@ -1224,7 +1244,7 @@ def main():
     for a0, time in zip(list_frames, abs_times):
         time_str = convert_to_utc_str(time)
         a, objects, x_detected, y_detected, stars, x_predicted, y_predicted, dst_calc, x_src_predicted, y_src_predicted, delta_x, delta_y, rot_ang, scal_fact, transf, nearby_predicted, found_turples = get_star_parameters_from_subrun_physical(a0, time_str, ra_center, dec_center, psct_config, catalog, sources_of_interest,
-            thresh = 2, filter_type='conv', minarea = 1, deblend_nthresh=32, deblend_cont=0.005, 
+            thresh = threshold_source_finding, filter_type='conv', minarea = 1, deblend_nthresh=32, deblend_cont=0.005, 
             clean=True, clean_param=1.0, segmentation_map=False, distance_of_margin = 60, 
             min_matches_fraction = 0.4, pixel_tol = 13, max_control_points = 50, detection_sigma = 5, min_area = 2
         )
